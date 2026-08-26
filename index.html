@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quản Lý Chi Tiêu Gia Đình</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gray-100 font-sans p-4 max-w-md mx-auto">
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-4">
+        <h1 class="text-xl font-bold text-gray-800">Quản Lý Chi Tiêu</h1>
+        <button onclick="exportCSV()" class="text-sm bg-green-600 text-white px-3 py-1 rounded">Xuất CSV</button>
+    </div>
+
+    <!-- Tổng quan số dư -->
+    <div class="bg-indigo-600 text-white p-4 rounded-xl shadow mb-4">
+        <p class="text-xs text-indigo-200">Tổng Số Dư Tất Cả Tháng</p>
+        <h2 id="totalBalance" class="text-2xl font-bold my-1">0 đ</h2>
+        <div class="flex justify-between text-xs mt-3 pt-2 border-t border-indigo-500">
+            <span>Thu: <strong id="totalIncome" class="text-green-300">+0 đ</strong></span>
+            <span>Chi: <strong id="totalExpense" class="text-red-300">-0 đ</strong></span>
+        </div>
+    </div>
+
+    <!-- Ô Tìm kiếm -->
+    <input type="text" id="searchInput" oninput="renderData()" placeholder="Tìm kiếm giao dịch..." class="w-full p-2 mb-4 border rounded-lg text-sm bg-white">
+
+    <!-- Chuyển đổi Danh sách / Biểu đồ -->
+    <div class="flex mb-4 bg-gray-200 rounded-lg p-1 text-xs font-semibold">
+        <button id="btnList" onclick="toggleView('list')" class="flex-1 py-2 rounded-md bg-white shadow text-gray-800">Danh sách</button>
+        <button id="btnChart" onclick="toggleView('chart')" class="flex-1 py-2 rounded-md text-gray-500">Biểu đồ</button>
+    </div>
+
+    <!-- Khung Danh sách hiển thị theo Tháng -->
+    <div id="listView" class="space-y-4"></div>
+
+    <!-- Khung Biểu đồ -->
+    <div id="chartView" class="hidden bg-white p-4 rounded-xl shadow">
+        <h3 class="text-sm font-bold mb-3 text-center text-gray-700">Tỷ Lệ Chi Tiêu Theo Danh Mục</h3>
+        <canvas id="categoryChart"></canvas>
+    </div>
+
+    <!-- Nút Nổi Thêm Giao Dịch (+) -->
+    <button onclick="openModal()" class="fixed bottom-6 right-6 bg-indigo-600 text-white text-3xl w-14 h-14 rounded-full shadow-lg flex items-center justify-center font-light">+</button>
+
+    <!-- Modal Form Thêm/Sửa Giao Dịch -->
+    <div id="transactionModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl p-5 w-full max-w-sm">
+            <div class="flex justify-between items-center mb-3">
+                <h3 id="modalTitle" class="font-bold text-gray-800">Thêm Giao Dịch</h3>
+                <label class="bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded cursor-pointer font-semibold">
+                    📷 Quét Bill
+                    <input type="file" accept="image/*" onchange="scanBill(event)" class="hidden">
+                </label>
+            </div>
+
+            <!-- Loại giao dịch -->
+            <div class="flex gap-2 mb-3">
+                <button type="button" id="btnExpense" onclick="setType(true)" class="flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white">Chi tiêu</button>
+                <button type="button" id="btnIncome" onclick="setType(false)" class="flex-1 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700">Thu nhập</button>
+            </div>
+
+            <p id="scanStatus" class="text-xs text-indigo-600 font-semibold mb-2 hidden">⏳ Đang đọc số tiền từ bill...</p>
+
+            <!-- Input Số tiền -->
+            <label class="block text-xs text-gray-500 mb-1">Số tiền</label>
+            <input type="number" id="amountInput" placeholder="0" class="w-full p-2 mb-3 border rounded-lg text-sm">
+
+            <!-- Input Nội dung -->
+            <label class="block text-xs text-gray-500 mb-1">Nội dung</label>
+            <input type="text" id="titleInput" placeholder="Nội dung" class="w-full p-2 mb-3 border rounded-lg text-sm">
+
+            <!-- Chọn Danh mục -->
+            <label class="block text-xs text-gray-500 mb-1">Danh mục</label>
+            <div id="categoryContainer" class="flex flex-wrap gap-1 mb-4"></div>
+
+            <div class="flex justify-end gap-2 pt-2 border-t">
+                <button onclick="closeModal()" class="px-4 py-2 text-xs text-gray-500">Hủy</button>
+                <button onclick="saveTransaction()" class="px-5 py-2 text-xs bg-indigo-600 text-white rounded-lg font-semibold">Lưu</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Cấu hình Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyDLsxLNndx2_QVi04VdiNt9XJg9z42nd5Q",
+            authDomain: "thuchi-5febb.firebaseapp.com",
+            databaseURL: "https://thuchi-5febb-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "thuchi-5febb",
+            storageBucket: "thuchi-5febb.firebasestorage.app",
+            messagingSenderId: "321892458894",
+            appId: "1:321892458894:web:6a91e6c2f4300f2a4584df",
+            measurementId: "G-TGKTLPMK4D"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let transactions = [];
+        let categories = {
+            expense: ['Ăn uống', 'Di chuyển', 'Mua sắm'],
+            income: ['Lương', 'Thưởng']
+        };
+
+        let isExpense = true;
+        let selectedCategory = 'Ăn uống';
+        let currentEditId = null;
+        let pieChart = null;
+
+        // Lắng nghe dữ liệu realtime từ Firebase Firestore
+        db.collection("transactions").orderBy("dateMillis", "desc").onSnapshot(snapshot => {
+            transactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            renderData();
+        });
+
+        function setType(expense) {
+            isExpense = expense;
+            document.getElementById('btnExpense').className = expense ? 'flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white' : 'flex-1 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700';
+            document.getElementById('btnIncome').className = !expense ? 'flex-1 py-1.5 text-xs rounded-lg bg-indigo-600 text-white' : 'flex-1 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700';
+            
+            const currentCats = isExpense ? categories.expense : categories.income;
+            selectedCategory = currentCats[0] || 'Khác';
+            if (!currentEditId) {
+                document.getElementById('titleInput').value = selectedCategory;
+            }
+            renderCategories();
+        }
+
+        function renderCategories() {
+            const container = document.getElementById('categoryContainer');
+            container.innerHTML = '';
+            const list = isExpense ? categories.expense : categories.income;
+
+            list.forEach(cat => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = cat;
+                btn.className = `px-3 py-1 rounded-full text-xs ${selectedCategory === cat ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`;
+                btn.onclick = () => {
+                    selectedCategory = cat;
+                    if (!currentEditId) document.getElementById('titleInput').value = cat;
+                    renderCategories();
+                };
+                container.appendChild(btn);
+            });
+
+            // Nút Thêm danh mục (+)
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.textContent = '+';
+            addBtn.className = 'px-2 py-1 rounded-full text-xs font-bold bg-gray-200 text-gray-700';
+            addBtn.onclick = () => {
+                const name = prompt('Nhập tên danh mục mới:');
+                if (name && name.trim()) {
+                    const clean = name.trim();
+                    if (isExpense) categories.expense.push(clean);
+                    else categories.income.push(clean);
+                    selectedCategory = clean;
+                    if (!currentEditId) document.getElementById('titleInput').value = clean;
+                    renderCategories();
+                }
+            };
+            container.appendChild(addBtn);
+        }
+
+        function renderData() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            const filtered = transactions.filter(t => t.title.toLowerCase().includes(query) || t.category.toLowerCase().includes(query));
+
+            // Tính tổng
+            let inc = 0, exp = 0;
+            filtered.forEach(t => t.isExpense ? exp += t.amount : inc += t.amount);
+            document.getElementById('totalBalance').innerText = (inc - exp).toLocaleString('vi-VN') + ' đ';
+            document.getElementById('totalIncome').innerText = '+' + inc.toLocaleString('vi-VN') + ' đ';
+            document.getElementById('totalExpense').innerText = '-' + exp.toLocaleString('vi-VN') + ' đ';
+
+            // Nhóm theo Tháng
+            const grouped = {};
+            filtered.forEach(t => {
+                const d = new Date(t.dateMillis);
+                const monthKey = `Mục: Tháng ${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`;
+                if (!grouped[monthKey]) grouped[monthKey] = [];
+                grouped[monthKey].push(t);
+            });
+
+            const listView = document.getElementById('listView');
+            listView.innerHTML = '';
+
+            for (let month in grouped) {
+                const items = grouped[month];
+                let mInc = 0, mExp = 0;
+                items.forEach(i => i.isExpense ? mExp += i.amount : mInc += i.amount);
+
+                let html = `
+                    <div class="bg-white rounded-xl p-4 shadow">
+                        <div class="flex justify-between items-center pb-2 border-b">
+                            <div>
+                                <h3 class="font-bold text-indigo-600 text-sm">${month}</h3>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    <span class="text-green-600 font-semibold">Thu: +${mInc.toLocaleString('vi-VN')} đ</span> | 
+                                    <span class="text-red-600 font-semibold">Chi: -${mExp.toLocaleString('vi-VN')} đ</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="divide-y text-xs">
+                `;
+
+                items.forEach(item => {
+                    const d = new Date(item.dateMillis);
+                    const dateStr = `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getFullYear()}`;
+                    html += `
+                        <div class="py-2.5 flex justify-between items-center cursor-pointer" onclick="openModal('${item.id}')">
+                            <div>
+                                <p class="font-semibold text-gray-800 text-sm">${item.title}</p>
+                                <p class="text-gray-400 text-xs">${item.category} • ${dateStr}</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold ${item.isExpense ? 'text-red-500' : 'text-green-600'}">
+                                    ${item.isExpense ? '-' : '+'}${item.amount.toLocaleString('vi-VN')} đ
+                                </span>
+                                <button onclick="deleteTrans(event, '${item.id}')" class="text-red-400 hover:text-red-600">✕</button>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `</div></div>`;
+                listView.innerHTML += html;
+            }
+
+            renderChart(filtered.filter(t => t.isExpense));
+        }
+
+        function renderChart(expenses) {
+            const catMap = {};
+            expenses.forEach(e => catMap[e.category] = (catMap[e.category] || 0) + e.amount);
+
+            const labels = Object.keys(catMap);
+            const data = Object.values(catMap);
+
+            const ctx = document.getElementById('categoryChart').getContext('2d');
+            if (pieChart) pieChart.destroy();
+
+            pieChart = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#f87171', '#4ade80', '#60a5fa', '#fbbf24', '#c084fc', '#2dd4bf']
+                    }]
+                },
+                options: { plugins: { legend: { position: 'bottom' } } }
+            });
+        }
+
+        function openModal(id = null) {
+            currentEditId = id;
+            if (id) {
+                const t = transactions.find(x => x.id === id);
+                document.getElementById('modalTitle').innerText = 'Sửa Giao Dịch';
+                document.getElementById('amountInput').value = t.amount;
+                document.getElementById('titleInput').value = t.title;
+                selectedCategory = t.category;
+                setType(t.isExpense);
+            } else {
+                document.getElementById('modalTitle').innerText = 'Thêm Giao Dịch';
+                document.getElementById('amountInput').value = '';
+                setType(true);
+            }
+            document.getElementById('transactionModal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('transactionModal').classList.add('hidden');
+            document.getElementById('scanStatus').classList.add('hidden');
+        }
+
+        function saveTransaction() {
+            const amount = parseFloat(document.getElementById('amountInput').value);
+            const title = document.getElementById('titleInput').value.trim();
+
+            if (!title || isNaN(amount) || amount <= 0) {
+                alert('Vui lòng điền đúng số tiền và nội dung!');
+                return;
+            }
+
+            const data = {
+                title: title,
+                amount: amount,
+                category: selectedCategory,
+                isExpense: isExpense,
+                dateMillis: currentEditId ? transactions.find(x => x.id === currentEditId).dateMillis : Date.now()
+            };
+
+            if (currentEditId) {
+                db.collection("transactions").doc(currentEditId).update(data);
+            } else {
+                db.collection("transactions").add(data);
+            }
+            closeModal();
+        }
+
+        function deleteTrans(event, id) {
+            event.stopPropagation();
+            if (confirm('Xóa giao dịch này?')) {
+                db.collection("transactions").doc(id).delete();
+            }
+        }
+
+        function toggleView(view) {
+            if (view === 'list') {
+                document.getElementById('listView').classList.remove('hidden');
+                document.getElementById('chartView').classList.add('hidden');
+                document.getElementById('btnList').className = 'flex-1 py-2 rounded-md bg-white shadow text-gray-800';
+                document.getElementById('btnChart').className = 'flex-1 py-2 rounded-md text-gray-500';
+            } else {
+                document.getElementById('listView').classList.add('hidden');
+                document.getElementById('chartView').classList.remove('hidden');
+                document.getElementById('btnChart').className = 'flex-1 py-2 rounded-md bg-white shadow text-gray-800';
+                document.getElementById('btnList').className = 'flex-1 py-2 rounded-md text-gray-500';
+            }
+        }
+
+        // Đọc ảnh bill đơn giản hóa bằng Tesseract.js
+        function scanBill(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const status = document.getElementById('scanStatus');
+            status.classList.remove('hidden');
+
+            Tesseract.recognize(file, 'eng', { logger: m => console.log(m) }).then(({ data: { text } }) => {
+                status.classList.add('hidden');
+                
+                // Lọc số tiền
+                const matches = text.match(/\b\d{1,3}(?:[.,]\d{3})+\b|\b\d{4,9}\b/g);
+                if (matches) {
+                    const numbers = matches.map(m => parseInt(m.replace(/[.,]/g, ''))).filter(n => n >= 1000 && n <= 999999999);
+                    if (numbers.length > 0) {
+                        const maxAmount = Math.max(...numbers);
+                        document.getElementById('amountInput').value = maxAmount;
+                        alert('Đã đọc số tiền: ' + maxAmount.toLocaleString('vi-VN') + ' đ');
+                        return;
+                    }
+                }
+                alert('Không đọc được số tiền rõ ràng từ bill, vui lòng điền thủ công!');
+            }).catch(() => {
+                status.classList.add('hidden');
+                alert('Lỗi quét ảnh bill!');
+            });
+        }
+
+        function exportCSV() {
+            let csv = "ID,Loai,Noi Dung,So Tien,Danh Muc,Ngay\n";
+            transactions.forEach(t => {
+                const d = new Date(t.dateMillis);
+                csv += `${t.id},${t.isExpense?'Chi':'Thu'},${t.title},${t.amount},${t.category},${d.toLocaleDateString('vi-VN')}\n`;
+            });
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'ThuChi_GiaDinh.csv';
+            a.click();
+        }
+    </script>
+</body>
+</html>

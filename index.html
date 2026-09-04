@@ -332,9 +332,7 @@
 
        
 // Đọc ảnh bill thông minh chuyên biệt cho ngân hàng Việt Nam
-// Đọc ảnh bill thông minh chuẩn xác cho VPBank, Vietcombank, MB...
-// Đọc ảnh bill thông minh - Tối ưu riêng cho VPBank và các ngân hàng Việt Nam
-// Đọc ảnh bill thông minh - Tối ưu riêng cho VPBank và các ngân hàng Việt Nam
+// Đọc ảnh bill thông minh - Giữ đúng 40% đỉnh ảnh để loại bỏ hoàn toàn mã tra soát
 function scanBill(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -346,26 +344,24 @@ function scanBill(event) {
     reader.onload = function(e) {
         const img = new Image();
         img.onload = function() {
-            // Tạo Canvas xử lý ảnh
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             
-            // Xử lý phóng to để OCR nhận diện được cả font chữ siêu to của VPBank
             canvas.width = img.width;
             canvas.height = img.height;
             ctx.drawImage(img, 0, 0);
 
-            // Bỏ bớt 40% phần đáy ảnh (nơi chứa Mã tra soát, quảng cáo, nút bấm...)
+            // CHỈ GIỮ LẠI 40% PHẦN ĐỈNH ẢNH (Nơi chứa số tiền chính)
             const cropCanvas = document.createElement('canvas');
             const cropCtx = cropCanvas.getContext('2d');
             cropCanvas.width = img.width;
-            cropCanvas.height = img.height * 0.6; // Chỉ giữ 60% phần trên
-            cropCtx.drawImage(canvas, 0, 0, img.width, img.height * 0.6, 0, 0, img.width, img.height * 0.6);
+            cropCanvas.height = img.height * 0.4; // Lấy đúng 40% phần trên cùng
+            cropCtx.drawImage(canvas, 0, 0, img.width, img.height * 0.4, 0, 0, img.width, img.height * 0.4);
 
             Tesseract.recognize(cropCanvas, 'eng', { logger: m => console.log(m) }).then(({ data: { text } }) => {
                 status.classList.add('hidden');
 
-                // 1. Loại bỏ các chữ số thuộc về ngày tháng (ví dụ: 04/09/2026, 04092026, 2026)
+                // 1. Loại bỏ các chữ số thuộc về ngày tháng nếu có (ví dụ: 2026, 2025)
                 let cleanedText = text.replace(/\b\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}\b/g, '')
                                      .replace(/\b(2024|2025|2026|2027)\b/g, '');
 
@@ -381,7 +377,6 @@ function scanBill(event) {
                         .filter(n => n >= 1000 && n <= 999999999);
 
                     if (numbers.length > 0) {
-                        // Lấy con số hợp lệ đầu tiên ở phần trên bill
                         const amount = numbers[0];
                         document.getElementById('amountInput').value = amount;
                         alert('Đã đọc số tiền: ' + amount.toLocaleString('vi-VN') + ' đ');

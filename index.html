@@ -331,33 +331,51 @@
         }
 
         // Đọc ảnh bill đơn giản hóa bằng Tesseract.js
-        function scanBill(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+        // Đọc ảnh bill thông minh
+function scanBill(event) {
+    const file = event.target.files[0];
+    if (!file) return;
 
-            const status = document.getElementById('scanStatus');
-            status.classList.remove('hidden');
+    const status = document.getElementById('scanStatus');
+    status.classList.remove('hidden');
 
-            Tesseract.recognize(file, 'eng', { logger: m => console.log(m) }).then(({ data: { text } }) => {
-                status.classList.add('hidden');
-                
-                // Lọc số tiền
-                const matches = text.match(/\b\d{1,3}(?:[.,]\d{3})+\b|\b\d{4,9}\b/g);
-                if (matches) {
-                    const numbers = matches.map(m => parseInt(m.replace(/[.,]/g, ''))).filter(n => n >= 1000 && n <= 999999999);
-                    if (numbers.length > 0) {
-                        const maxAmount = Math.max(...numbers);
-                        document.getElementById('amountInput').value = maxAmount;
-                        alert('Đã đọc số tiền: ' + maxAmount.toLocaleString('vi-VN') + ' đ');
-                        return;
-                    }
-                }
-                alert('Không đọc được số tiền rõ ràng từ bill, vui lòng điền thủ công!');
-            }).catch(() => {
-                status.classList.add('hidden');
-                alert('Lỗi quét ảnh bill!');
-            });
+    Tesseract.recognize(file, 'vie+eng', { logger: m => console.log(m) }).then(({ data: { text } }) => {
+        status.classList.add('hidden');
+        
+        // 1. Chuẩn hóa chuỗi: Thay khoảng trắng giữa các chữ số (ví dụ "250 000" -> "250000")
+        let cleanedText = text.replace(/(\d)\s+(\d)/g, '$1$2');
+
+        // 2. Loại bỏ các dòng chứa từ khóa liên quan đến mã giao dịch / mã tra soát / STK
+        const lines = cleanedText.split('\n').filter(line => {
+            const lower = line.toLowerCase();
+            return !lower.includes('tra soát') && 
+                   !lower.includes('mã gd') && 
+                   !lower.includes('thời gian') && 
+                   !lower.includes('stk') && 
+                   !lower.includes('tài khoản');
+        });
+
+        const filteredText = lines.join('\n');
+
+        // 3. Lọc số tiền (ưu tiên các cụm số có dấu chấm/phẩy/khoảng trắng hoặc đứng trước chữ đ/VND)
+        const matches = filteredText.match(/\b\d{1,3}(?:[.,\s]\d{3})+\b|\b\d{4,9}\b/g);
+        
+        if (matches) {
+            const numbers = matches.map(m => parseInt(m.replace(/[.,\s]/g, ''))).filter(n => n >= 1000 && n <= 999999999);
+            if (numbers.length > 0) {
+                // Ưu tiên số đầu tiên tìm thấy trên bill (thường số tiền tổng nằm ở vị trí trên cùng)
+                const amount = numbers[0];
+                document.getElementById('amountInput').value = amount;
+                alert('Đã đọc số tiền: ' + amount.toLocaleString('vi-VN') + ' đ');
+                return;
+            }
         }
+        alert('Không đọc được số tiền rõ ràng từ bill, vui lòng điền thủ công!');
+    }).catch(() => {
+        status.classList.add('hidden');
+        alert('Lỗi quét ảnh bill!');
+    });
+}
 
         function exportCSV() {
             let csv = "ID,Loai,Noi Dung,So Tien,Danh Muc,Ngay\n";
